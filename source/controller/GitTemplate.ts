@@ -1,4 +1,3 @@
-import { RepositoryModel } from 'mobx-github';
 import {
     Authorized,
     Body,
@@ -7,7 +6,6 @@ import {
     Get,
     HttpCode,
     JsonController,
-    NotFoundError,
     OnNull,
     OnUndefined,
     Param,
@@ -16,41 +14,13 @@ import {
 } from 'routing-controllers';
 import { ResponseSchema } from 'routing-controllers-openapi';
 
-import {
-    BaseFilter,
-    dataSource,
-    GitTemplate,
-    GitTemplateListChunk,
-    Hackathon,
-    HackathonBase,
-    User
-} from '../model';
+import { BaseFilter, GitTemplate, GitTemplateListChunk, User } from '../model';
+import { gitTemplateService, hackathonService } from '../service';
 import { searchConditionOf } from '../utility';
-import { ActivityLogController } from './ActivityLog';
-import { HackathonController } from './Hackathon';
-
-const store = dataSource.getRepository(GitTemplate),
-    hackathonStore = dataSource.getRepository(Hackathon);
-const repositoryStore = new RepositoryModel();
 
 @JsonController('/hackathon/:name/git-template')
 export class GitTemplateController {
-    static async getRepository(
-        URI: string
-    ): Promise<Omit<GitTemplate, keyof HackathonBase>> {
-        const path = URI.replace(
-            new RegExp(String.raw`^https://github.com/`),
-            'repos'
-        );
-        const repository = await repositoryStore.getOne(path, ['languages']);
-
-        const { name, full_name, html_url, default_branch } = repository,
-            { languages, topics, description, homepage } = repository;
-        return {
-            ...{ name, full_name, html_url, default_branch },
-            ...{ languages, topics, description, homepage }
-        };
-    }
+    service = gitTemplateService;
 
     @Post()
     @Authorized()
@@ -61,22 +31,11 @@ export class GitTemplateController {
         @Param('name') name: string,
         @Body() { html_url }: GitTemplate
     ) {
-        const hackathon = await hackathonStore.findOneBy({ name });
+        const hackathon = await hackathonService.ensureAdmin(createdBy.id, name);
 
-        if (!hackathon) throw new NotFoundError();
+        const repository = await gitTemplateService.getRepository(html_url);
 
-        await HackathonController.ensureAdmin(createdBy.id, name);
-
-        const repository = await GitTemplateController.getRepository(html_url);
-
-        const saved = await store.save({ ...repository, hackathon, createdBy });
-
-        await ActivityLogController.logCreate(
-            createdBy,
-            'GitTemplate',
-            saved.id
-        );
-        return saved;
+        return this.service.createOne({ ...repository, hackathon }, createdBy);
     }
 
     @Delete('/:id')
@@ -87,32 +46,21 @@ export class GitTemplateController {
         @Param('name') name: string,
         @Param('id') id: number
     ) {
-        const gitTemplate = await store.findOneBy({ id });
+        await hackathonService.ensureAdmin(deletedBy.id, name);
 
-        if (!gitTemplate) throw new NotFoundError();
-
-        await HackathonController.ensureAdmin(deletedBy.id, name);
-
-        await store.save({ ...gitTemplate, deletedBy });
-        await store.softDelete(id);
-
-        await ActivityLogController.logDelete(deletedBy, 'GitTemplate', id);
+        await this.service.deleteOne(id, deletedBy);
     }
 
     @Get('/:id')
     @OnNull(404)
     @ResponseSchema(GitTemplate)
     getOne(@Param('id') id: number) {
-        return store.findOneBy({ id });
+        return this.service.getOne(id);
     }
 
     @Get()
     @ResponseSchema(GitTemplateListChunk)
-    async getList(
-        @Param('name') name: string,
-        @QueryParams()
-        { keywords, pageSize, pageIndex }: BaseFilter
-    ) {
+    getList(@Param('name') name: string, @QueryParams() { keywords, ...filter }: BaseFilter) {
         const where = searchConditionOf<GitTemplate>(
             [
                 'name',
@@ -127,11 +75,6 @@ export class GitTemplateController {
             keywords,
             { hackathon: { name } }
         );
-        const [list, count] = await store.findAndCount({
-            where,
-            skip: pageSize * (pageIndex - 1),
-            take: pageSize
-        });
-        return { list, count };
+        return this.service.getList({ keywords, ...filter }, where);
     }
 }

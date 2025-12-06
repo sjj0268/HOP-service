@@ -14,34 +14,24 @@ import {
 import { ResponseSchema } from 'routing-controllers-openapi';
 import { groupBy, sum } from 'web-utility';
 
-import {
-    BaseFilter,
-    dataSource,
-    Evaluation,
-    EvaluationListChunk,
-    Score,
-    Team,
-    User
-} from '../model';
+import { BaseFilter, Evaluation, EvaluationListChunk, Score, User } from '../model';
+import { teamService, UserServiceWithLog } from '../service';
 import { searchConditionOf } from '../utility';
-import { ActivityLogController } from './ActivityLog';
-
-const store = dataSource.getRepository(Evaluation),
-    teamStore = dataSource.getRepository(Team);
 
 @JsonController('/hackathon/:name/team/:tid/evaluation')
 export class EvaluationController {
+    service = new UserServiceWithLog(Evaluation, ['scores', 'comment']);
+
     @Post()
     @Authorized()
     @HttpCode(201)
     @ResponseSchema(Evaluation)
     async createOne(
         @CurrentUser() createdBy: User,
-        @Param('name') name: string,
         @Param('tid') tid: number,
         @Body() evaluation: Evaluation
     ) {
-        const team = await teamStore.findOne({
+        const team = await teamService.store.findOne({
             where: { id: tid },
             relations: ['hackathon']
         });
@@ -52,15 +42,11 @@ export class EvaluationController {
         if (now < +new Date(hackathon.judgeStartedAt) || now > +new Date(hackathon.judgeEndedAt))
             throw new ForbiddenError('Not in evaluation period');
 
-        const saved = await store.save({
-            ...evaluation,
-            team,
-            hackathon: team.hackathon,
+        const saved = await this.service.createOne(
+            { ...evaluation, team, hackathon: team.hackathon },
             createdBy
-        });
-        await ActivityLogController.logCreate(createdBy, 'Evaluation', saved.id);
-
-        const allScores = (await store.findBy({ team: { id: tid } }))
+        );
+        const allScores = (await this.service.store.findBy({ team: { id: tid } }))
             .map(({ scores }) => scores)
             .flat();
         const dimensionGroup = groupBy(allScores, 'dimension');
@@ -73,25 +59,17 @@ export class EvaluationController {
         );
         const score = sum(...scores.map(({ score }) => score));
 
-        await teamStore.save({ ...team, scores, score });
+        await teamService.store.save({ ...team, scores, score });
 
         return saved;
     }
 
     @Get()
     @ResponseSchema(EvaluationListChunk)
-    async getList(
-        @Param('tid') tid: number,
-        @QueryParams() { keywords, pageSize, pageIndex }: BaseFilter
-    ) {
+    getList(@Param('tid') tid: number, @QueryParams() { keywords, ...filter }: BaseFilter) {
         const where = searchConditionOf<Evaluation>(['scores', 'comment'], keywords, {
             team: { id: tid }
         });
-        const [list, count] = await store.findAndCount({
-            where,
-            skip: pageSize * (pageIndex - 1),
-            take: pageSize
-        });
-        return { list, count };
+        return this.service.getList({ keywords, ...filter }, where);
     }
 }

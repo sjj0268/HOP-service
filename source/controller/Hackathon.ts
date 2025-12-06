@@ -3,7 +3,6 @@ import {
     Body,
     CurrentUser,
     Delete,
-    ForbiddenError,
     Get,
     HttpCode,
     JsonController,
@@ -17,41 +16,13 @@ import {
 } from 'routing-controllers';
 import { ResponseSchema } from 'routing-controllers-openapi';
 
-import {
-    dataSource,
-    Hackathon,
-    HackathonFilter,
-    HackathonListChunk,
-    StaffType,
-    User
-} from '../model';
-import { searchConditionOf } from '../utility';
-import { ActivityLogController } from './ActivityLog';
-import { EnrollmentController } from './Enrollment';
-import { PlatformAdminController } from './PlatformAdmin';
-import { StaffController } from './Staff';
-
-const store = dataSource.getRepository(Hackathon);
+import { Hackathon, HackathonFilter, HackathonListChunk, StaffType, User } from '../model';
+import { enrollmentService, hackathonService, staffService } from '../service';
 
 @JsonController('/hackathon')
 export class HackathonController {
-    static async ensureAdmin(userId: number, hackathonName: string) {
-        if (
-            !(await StaffController.isAdmin(userId, hackathonName)) &&
-            !(await PlatformAdminController.isAdmin(userId))
-        )
-            throw new ForbiddenError();
-    }
-
-    static async ensureJudge(userId: number, hackathonName: string) {
-        if (!(await StaffController.isJudge(userId, hackathonName)))
-            throw new ForbiddenError();
-    }
-
-    static async ensureEnrolled(userId: number, hackathonName: string) {
-        if (!(await EnrollmentController.isEnrolled(userId, hackathonName)))
-            throw new ForbiddenError();
-    }
+    service = hackathonService;
+    store = this.service.store;
 
     @Put('/:name')
     @Authorized()
@@ -61,38 +32,33 @@ export class HackathonController {
         @Param('name') name: string,
         @Body() newData: Hackathon
     ) {
-        const old = await store.findOne({
+        const old = await this.store.findOne({
             where: { name },
             relations: ['createdBy']
         });
         if (!old) throw new NotFoundError();
 
-        await HackathonController.ensureAdmin(updatedBy.id, name);
+        await hackathonService.ensureAdmin(updatedBy.id, name);
 
-        const saved = await store.save({ ...old, ...newData, updatedBy });
-
-        await ActivityLogController.logUpdate(updatedBy, 'Hackathon', old.id);
-
-        return saved;
+        return this.service.editOne(old.id, newData, updatedBy);
     }
 
     @Get('/:name')
     @ResponseSchema(Hackathon)
     @OnNull(404)
     async getOne(@CurrentUser() user: User, @Param('name') name: string) {
-        const hackathon = await store.findOne({
+        const hackathon = await this.store.findOne({
             where: { name },
             relations: ['createdBy']
         });
 
-        if (user) {
-            const hid = hackathon.id,
-                uid = user.id;
+        if (user && hackathon) {
+            const uid = user.id;
 
             hackathon.roles = {
-                isAdmin: await StaffController.isAdmin(uid, name),
-                isJudge: await StaffController.isJudge(uid, name),
-                isEnrolled: await EnrollmentController.isEnrolled(uid, name)
+                isAdmin: await staffService.isAdmin(uid, name),
+                isJudge: await staffService.isJudge(uid, name),
+                isEnrolled: await enrollmentService.isEnrolled(uid, name)
             };
         }
         return hackathon;
@@ -101,80 +67,39 @@ export class HackathonController {
     @Delete('/:name')
     @Authorized()
     @OnUndefined(204)
-    async deleteOne(
-        @CurrentUser() deletedBy: User,
-        @Param('name') name: string
-    ) {
-        const old = await store.findOneBy({ name });
+    async deleteOne(@CurrentUser() deletedBy: User, @Param('name') name: string) {
+        const old = await this.store.findOneBy({ name });
 
         if (!old) throw new NotFoundError();
 
-        await HackathonController.ensureAdmin(deletedBy.id, name);
+        await hackathonService.ensureAdmin(deletedBy.id, name);
 
-        await store.save({ ...old, deletedBy });
-        await store.softDelete(old.id);
-
-        await ActivityLogController.logDelete(deletedBy, 'Hackathon', old.id);
+        await this.service.deleteOne(old.id, deletedBy);
     }
 
     @Post()
     @Authorized()
     @HttpCode(201)
     @ResponseSchema(Hackathon)
-    async createOne(
-        @CurrentUser() createdBy: User,
-        @Body() hackathon: Hackathon
-    ) {
-        const saved = await store.save({ ...hackathon, createdBy });
+    async createOne(@CurrentUser() createdBy: User, @Body() hackathon: Hackathon) {
+        const saved = await this.service.createOne(hackathon, createdBy);
 
-        await ActivityLogController.logCreate(createdBy, 'Hackathon', saved.id);
-
-        await StaffController.addOne({
-            type: StaffType.Admin,
-            user: createdBy,
-            description: 'Hackathon Creator',
-            hackathon: saved,
+        await staffService.createOne(
+            {
+                type: StaffType.Admin,
+                user: createdBy,
+                description: 'Hackathon Creator',
+                hackathon: saved,
+                createdBy
+            },
             createdBy
-        });
+        );
         return saved;
     }
 
     @Get()
     @ResponseSchema(HackathonListChunk)
-    async getList(
-        @QueryParams()
-        {
-            keywords,
-            pageSize,
-            pageIndex,
-            createdBy,
-            updatedBy,
-            ...filter
-        }: HackathonFilter
-    ) {
-        const where = searchConditionOf<Hackathon>(
-            [
-                'name',
-                'displayName',
-                'ribbon',
-                'summary',
-                'detail',
-                'location',
-                'tags'
-            ],
-            keywords,
-            {
-                ...filter,
-                createdBy: { id: createdBy },
-                updatedBy: { id: updatedBy }
-            }
-        );
-        const [list, count] = await store.findAndCount({
-            where,
-            relations: ['createdBy'],
-            skip: pageSize * (pageIndex - 1),
-            take: pageSize
-        });
-        return { list, count };
+    getList(@QueryParams() filter: HackathonFilter) {
+        return this.service.getList(filter);
     }
 }
