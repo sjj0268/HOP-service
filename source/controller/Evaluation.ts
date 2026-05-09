@@ -15,8 +15,9 @@ import { ResponseSchema } from 'routing-controllers-openapi';
 import { groupBy, sum } from 'web-utility';
 
 import { BaseFilter, Evaluation, EvaluationListChunk, Score, User } from '../model';
-import { teamService, UserServiceWithLog } from '../service';
-import { searchConditionOf } from '../utility';
+import { emailService, teamService, LocalizedRenderer, UserServiceWithLog } from '../service';
+import { renderEvaluationSubmitted } from '../template/EvaluationSubmitted';
+import { interpolateURL, searchConditionOf, TEAM_FRONTEND_URL } from '../utility';
 
 @JsonController('/hackathon/:name/team/:tid/evaluation')
 export class EvaluationController {
@@ -28,6 +29,7 @@ export class EvaluationController {
     @ResponseSchema(Evaluation)
     async createOne(
         @CurrentUser() createdBy: User,
+        @Param('name') name: string,
         @Param('tid') tid: number,
         @Body() evaluation: Evaluation
     ) {
@@ -61,6 +63,13 @@ export class EvaluationController {
 
         await teamService.store.save({ ...team, scores, score });
 
+        if (TEAM_FRONTEND_URL) {
+            const renderFn: LocalizedRenderer = i18n =>
+                renderEvaluationSubmitted({ teamUrl: interpolateURL(TEAM_FRONTEND_URL, { name, tid }) }, i18n);
+
+            emailService.sendToTeamMembers(tid, undefined, renderFn);
+            emailService.sendToHackathonStaff(name, renderFn);
+        }
         return saved;
     }
 

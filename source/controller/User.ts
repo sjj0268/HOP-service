@@ -16,8 +16,26 @@ import {
 } from 'routing-controllers';
 import { ResponseSchema } from 'routing-controllers-openapi';
 
-import { Role, SignInData, User, UserFilter, UserListChunk } from '../model';
-import { activityLogService, BaseService, sessionService } from '../service';
+import {
+    BaseFilter,
+    Enrollment,
+    HackathonListChunk,
+    Role,
+    SignInData,
+    Staff,
+    User,
+    UserFilter,
+    UserHackathonType,
+    UserListChunk
+} from '../model';
+import {
+    activityLogService,
+    BaseService,
+    hackathonService,
+    sessionService
+} from '../service';
+
+const UserHackathonTypeRegExp = Object.values(UserHackathonType).join('|');
 
 @JsonController('/user')
 export class UserController {
@@ -70,6 +88,54 @@ export class UserController {
         await activityLogService.logUpdate(updatedBy, 'User', id);
 
         return sessionService.sign(await this.store.findOneBy({ id }));
+    }
+
+    @Get(`/:id/hackathon/:type(${UserHackathonTypeRegExp})`)
+    @ResponseSchema(HackathonListChunk)
+    async getHackathonListByType(
+        @Param('id') id: number,
+        @Param('type') type: UserHackathonType,
+        @QueryParams() { pageSize = 10, pageIndex = 1 }: BaseFilter
+    ): Promise<HackathonListChunk> {
+        const skip = pageSize * (pageIndex - 1);
+
+        if (type === UserHackathonType.Enrollee) {
+            const [list, count] = await hackathonService.store
+                .createQueryBuilder('hackathon')
+                .innerJoin(
+                    Enrollment,
+                    'enrollment',
+                    'enrollment.hackathonId = hackathon.id AND enrollment.createdById = :id',
+                    { id }
+                )
+                .leftJoinAndSelect('hackathon.createdBy', 'createdBy')
+                .orderBy('hackathon.updatedAt', 'DESC')
+                .skip(skip)
+                .take(pageSize)
+                .getManyAndCount();
+
+            return { count, list };
+        }
+
+        if (type === UserHackathonType.Staff) {
+            const [list, count] = await hackathonService.store
+                .createQueryBuilder('hackathon')
+                .innerJoin(
+                    Staff,
+                    'staff',
+                    'staff.hackathonId = hackathon.id AND staff.userId = :id',
+                    { id }
+                )
+                .leftJoinAndSelect('hackathon.createdBy', 'createdBy')
+                .orderBy('hackathon.updatedAt', 'DESC')
+                .skip(skip)
+                .take(pageSize)
+                .getManyAndCount();
+
+            return { count, list };
+        }
+
+        return hackathonService.getList({ createdBy: id, pageSize, pageIndex });
     }
 
     @Get('/:id')

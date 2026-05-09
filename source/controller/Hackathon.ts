@@ -3,6 +3,7 @@ import {
     Body,
     CurrentUser,
     Delete,
+    ForbiddenError,
     Get,
     HttpCode,
     JsonController,
@@ -16,8 +17,19 @@ import {
 } from 'routing-controllers';
 import { ResponseSchema } from 'routing-controllers-openapi';
 
-import { Hackathon, HackathonFilter, HackathonListChunk, StaffType, User } from '../model';
-import { enrollmentService, hackathonService, staffService } from '../service';
+import {
+    Hackathon,
+    HackathonFilter,
+    HackathonListChunk,
+    HackathonStatus,
+    Role,
+    StaffType,
+    User
+} from '../model';
+import { emailService, enrollmentService, hackathonService, staffService } from '../service';
+import { renderHackathonCreated } from '../template/HackathonCreated';
+import { renderHackathonStatusUpdated } from '../template/HackathonStatusUpdated';
+import { ADMIN_FRONTEND_URL, HACKATHON_ADMIN_URL, interpolateURL } from '../utility';
 
 @JsonController('/hackathon')
 export class HackathonController {
@@ -40,7 +52,17 @@ export class HackathonController {
 
         await hackathonService.ensureAdmin(updatedBy.id, name);
 
-        return this.service.editOne(old.id, newData, updatedBy);
+        const updated = await this.service.editOne(old.id, newData, updatedBy);
+
+        if (newData.status && newData.status !== old.status && HACKATHON_ADMIN_URL)
+            emailService.sendToHackathonStaff(name, i18n =>
+                renderHackathonStatusUpdated({
+                    displayName: old.displayName,
+                    newStatus: newData.status,
+                    hackathonUrl: interpolateURL(HACKATHON_ADMIN_URL, { name })
+                }, i18n)
+            );
+        return updated;
     }
 
     @Get('/:name')
@@ -52,7 +74,15 @@ export class HackathonController {
             relations: ['createdBy']
         });
 
-        if (user && hackathon) {
+        if (!hackathon) return null;
+
+        if (hackathon.status !== HackathonStatus.Online) {
+            if (!user) throw new ForbiddenError();
+
+            await hackathonService.ensureAdmin(user.id, name);
+        }
+
+        if (user) {
             const uid = user.id;
 
             hackathon.roles = {
@@ -94,12 +124,24 @@ export class HackathonController {
             },
             createdBy
         );
+
+        if (ADMIN_FRONTEND_URL)
+            emailService.sendToPlatformAdmins(i18n =>
+                renderHackathonCreated({
+                    displayName: saved.displayName,
+                    reviewUrl: interpolateURL(ADMIN_FRONTEND_URL, { name: saved.name })
+                }, i18n)
+            );
         return saved;
     }
 
     @Get()
     @ResponseSchema(HackathonListChunk)
-    getList(@QueryParams() filter: HackathonFilter) {
+    async getList(@CurrentUser() user: User, @QueryParams() filter: HackathonFilter) {
+        const isAdmin = user?.roles?.includes(Role.Administrator) ?? false;
+
+        if (!isAdmin) filter.status = HackathonStatus.Online;
+
         return this.service.getList(filter);
     }
 }

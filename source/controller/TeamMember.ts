@@ -18,9 +18,16 @@ import {
 } from 'routing-controllers';
 import { ResponseSchema } from 'routing-controllers-openapi';
 
-import { TeamMember, TeamMemberFilter, TeamMemberListChunk, User } from '../model';
-import { hackathonService, sessionService, teamMemberService, teamService } from '../service';
-import { searchConditionOf } from '../utility';
+import { TeamMember, TeamMemberFilter, TeamMemberListChunk, TeamMemberRole, User } from '../model';
+import {
+    emailService,
+    hackathonService,
+    sessionService,
+    teamMemberService,
+    teamService
+} from '../service';
+import { interpolateURL, searchConditionOf, TEAM_ADMIN_URL } from '../utility';
+import { renderTeamJoinRequest } from '../template/TeamJoinRequest';
 
 @JsonController('/hackathon/:name/team/:id/member')
 export class TeamMemberController {
@@ -76,13 +83,22 @@ export class TeamMemberController {
 
         await hackathonService.ensureEnrolled(createdBy.id, name);
 
-        return teamMemberService.addOne({
+        const member = await teamMemberService.addOne({
             user: createdBy,
             description,
             team,
             hackathon: team.hackathon,
             createdBy
         });
+
+        if (TEAM_ADMIN_URL)
+            emailService.sendToTeamMembers(id, TeamMemberRole.Admin, i18n =>
+                renderTeamJoinRequest({
+                    applicantName: createdBy.name,
+                    teamUrl: interpolateURL(TEAM_ADMIN_URL, { name, id })
+                }, i18n)
+            );
+        return member;
     }
 
     @Put('/:uid')

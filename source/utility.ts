@@ -19,8 +19,19 @@ export const {
     AWS_S3_BUCKET,
     AWS_S3_ACCESS_KEY_ID,
     AWS_S3_SECRET_ACCESS_KEY,
-    AWS_S3_PUBLIC_HOST
+    AWS_S3_PUBLIC_HOST,
+    SMTP_HOST,
+    SMTP_PORT,
+    SMTP_USER,
+    SMTP_PASSWORD,
+    ADMIN_FRONTEND_URL,
+    HACKATHON_ADMIN_URL,
+    TEAM_ADMIN_URL,
+    TEAM_FRONTEND_URL
 } = process.env;
+
+export const interpolateURL = (template: string, params: Record<string, string | number>) =>
+    template.replace(/:([^/]+)/g, (match, key) => (key in params ? params[key] + '' : match));
 
 export type NoEmptyFields<T> = {
     [K in keyof T as T[K] extends null | undefined | '' | [] ? never : K]: T[K];

@@ -25,8 +25,9 @@ import {
     TeamWorkType,
     User
 } from '../model';
-import { gitTemplateService, teamService, UserServiceWithLog } from '../service';
-import { searchConditionOf } from '../utility';
+import { emailService, gitTemplateService, teamService, LocalizedRenderer, UserServiceWithLog } from '../service';
+import { renderTeamWorkSubmitted } from '../template/TeamWorkSubmitted';
+import { interpolateURL, searchConditionOf, TEAM_FRONTEND_URL } from '../utility';
 
 @JsonController('/hackathon/:name/team/:tid/work')
 export class TeamWorkController {
@@ -60,7 +61,7 @@ export class TeamWorkController {
                 ? await gitTemplateService.getRepository(work.url)
                 : undefined;
 
-        return this.service.createOne(
+        const saved = await this.service.createOne(
             {
                 ...work,
                 gitRepository: gitRepository as TeamWork['gitRepository'],
@@ -69,6 +70,19 @@ export class TeamWorkController {
             },
             createdBy
         );
+
+        if (TEAM_FRONTEND_URL) {
+            const { name } = team.hackathon;
+            const renderFn: LocalizedRenderer = i18n =>
+                renderTeamWorkSubmitted({
+                    workTitle: saved.title,
+                    teamUrl: interpolateURL(TEAM_FRONTEND_URL, { name, tid })
+                }, i18n);
+
+            emailService.sendToTeamMembers(tid, undefined, renderFn);
+            emailService.sendToHackathonStaff(name, renderFn);
+        }
+        return saved;
     }
 
     @Put('/:id')

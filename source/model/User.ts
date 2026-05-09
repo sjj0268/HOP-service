@@ -15,9 +15,10 @@ import {
 import { JsonWebTokenError } from 'jsonwebtoken';
 import { ParameterizedContext } from 'koa';
 import { NewData } from 'mobx-restful';
-import { Column, Entity, ManyToOne } from 'typeorm';
+import { Column, Entity, ManyToOne, OneToMany } from 'typeorm';
 
 import { Base, BaseFilter, InputData, ListChunk } from './Base';
+import { OAuthCredential } from './OAuth';
 
 export enum Gender {
     Female = 0,
@@ -117,9 +118,20 @@ export class User extends Base {
     @Column('simple-json')
     roles: Role[];
 
+    @IsString({ each: true })
+    @IsOptional()
+    @Column({ type: 'simple-json', nullable: true })
+    languages?: string[];
+
     @IsJWT()
     @IsOptional()
     token?: string;
+
+    @Type(() => OAuthCredential)
+    @ValidateNested({ each: true })
+    @IsOptional()
+    @OneToMany('OAuthCredential', ({ user }: OAuthCredential) => user)
+    oauthCredentials?: OAuthCredential[];
 }
 
 export abstract class UserBase extends Base {
