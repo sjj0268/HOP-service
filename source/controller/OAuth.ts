@@ -33,8 +33,7 @@ export class OauthController {
         platform: OAuthPlatform,
         profile: Partial<Pick<User, 'name' | 'avatar' | 'languages' | 'token'>>
     ) {
-        const { token: accessToken, ...newProfileData } = profile;
-        const username = newProfileData.name;
+        const { token: accessToken, name: username, ...newProfileData } = profile;
         if (!accessToken)
             throw new UnprocessableEntityError(
                 `${platform} user info is missing required field (accessToken)`
