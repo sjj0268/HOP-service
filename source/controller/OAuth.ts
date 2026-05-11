@@ -35,6 +35,11 @@ export class OauthController {
         profile: Partial<Pick<User, 'name' | 'avatar' | 'languages' | 'token'>>
     ) {
         const { token: username, ...newProfileData } = profile;
+        if (!username)
+            throw new UnprocessableEntityError(
+                `${platform} user info is missing required field (username)`
+            );
+
         const user =
             (await this.userStore.findOneBy({ email })) ||
             (await sessionService.signUp({ email, password: accessToken }));
@@ -55,10 +60,6 @@ export class OauthController {
             platform,
             user: { id: user.id }
         });
-        if (!username)
-            throw new UnprocessableEntityError(
-                `${platform} user info is missing required field (username)`
-            );
         await this.credentialStore.save({ ...existing, platform, accessToken, username, user });
 
         return sessionService.sign(user);

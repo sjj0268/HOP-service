@@ -47,7 +47,7 @@
         "typeorm": "^0.3.29",
         "undici": "^8.2.0",
         "web-utility": "^4.6.6",
-        "zx": "8.8.5"
+        "zx": "^8.8.5"
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",

@@ -26,14 +26,29 @@ import { AWS_S3_BUCKET, AWS_S3_PUBLIC_HOST, s3Client } from '../utility';
 
 const GIT_UPLOAD_TIMEOUT = 5 * 60 * 1000;
 const MAX_ERROR_LINES = 3;
+type UploadedGitFile = Record<'fieldname' | 'originalname' | 'encoding' | 'mimetype', string> &
+    Record<'size', number> &
+    Record<'buffer', Buffer>;
+
+const hasControlCharacter = (text: string) =>
+    [...text].some(character => {
+        const code = character.charCodeAt(0);
+
+        return code < 32 || code === 127;
+    });
+const MAX_UPLOAD_FILE_PATH_LENGTH = 512;
 
 const sanitizePathInput = (inputPath: string) => {
+    if (inputPath.length > MAX_UPLOAD_FILE_PATH_LENGTH)
+        throw new UnprocessableEntityError(`Invalid file path: ${inputPath}`);
+
     const normalizedPath = path.normalize(inputPath).replace(/^[\\/]+/g, '');
 
     if (
         !normalizedPath ||
         normalizedPath === '.' ||
         normalizedPath.startsWith('..') ||
+        hasControlCharacter(normalizedPath) ||
         path.isAbsolute(normalizedPath)
     )
         throw new UnprocessableEntityError(`Invalid file path: ${inputPath}`);
@@ -101,7 +116,7 @@ export class FileController {
         @QueryParam('branch') branch = 'main',
         @QueryParam('folder') folder?: string,
         @UploadedFiles('files', { options: { storage: multer.memoryStorage() } })
-        files?: { originalname: string; buffer: Buffer }[]
+        files?: UploadedGitFile[]
     ) {
         if (!files?.length) throw new BadRequestError('No files uploaded');
 
@@ -141,9 +156,15 @@ export class FileController {
                 await fs.writeFile(filePath, file.buffer);
             }
             if (targetFolder)
-                await $({ timeout: GIT_UPLOAD_TIMEOUT, quiet: true })`npx xgit upload ${tempRoot} ${repositoryURL.toString()} ${branch} ${targetFolder}`;
+                await $({
+                    timeout: GIT_UPLOAD_TIMEOUT,
+                    quiet: true
+                })`npx xgit upload ${tempRoot} ${repositoryURL.toString()} ${branch} ${targetFolder}`;
             else
-                await $({ timeout: GIT_UPLOAD_TIMEOUT, quiet: true })`npx xgit upload ${tempRoot} ${repositoryURL.toString()} ${branch}`;
+                await $({
+                    timeout: GIT_UPLOAD_TIMEOUT,
+                    quiet: true
+                })`npx xgit upload ${tempRoot} ${repositoryURL.toString()} ${branch}`;
         } catch (error) {
             const detail = sanitizeGitError(
                 error instanceof Error
