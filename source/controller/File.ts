@@ -32,7 +32,6 @@ import { dataSource, OAuthCredential, resolveOAuthPlatformByHost, SignedLink, Us
 import { AWS_S3_BUCKET, AWS_S3_PUBLIC_HOST, s3Client } from '../utility';
 
 const uploadMiddleware = multer({ dest: os.tmpdir() });
-$.verbose = true;
 
 @Controller('/file')
 export class FileController {
@@ -71,7 +70,7 @@ export class FileController {
     @HttpCode(201)
     @UseBefore(uploadMiddleware.any())
     async uploadFilesToGit(
-        @Req() { files }: { files: Express.Multer.File[] },
+        @Req() { files }: { files?: Express.Multer.File[] },
         @CurrentUser() user: User,
         @Param('noProtocolURL') noProtocolURL: string,
         @QueryParam('branch') branch = 'main',
@@ -107,8 +106,10 @@ export class FileController {
         const targetFolder = folder ? normalizeRelativePath(folder) : undefined;
         const tempRoot = await fs.mkdtemp(path.resolve(os.tmpdir(), 'hop-git-upload-'));
         const pendingUploadedPaths = new Set(files.map(({ path }) => path));
+        const originalVerbose = $.verbose;
 
         try {
+            $.verbose = true;
             for (const file of files) {
                 const filePath = resolveSafePath(tempRoot, file.fieldname);
 
@@ -133,6 +134,7 @@ export class FileController {
 
             throw new InternalServerError(`Git upload failed: ${reason}`);
         } finally {
+            $.verbose = originalVerbose;
             await Promise.all([...pendingUploadedPaths].map(uploadPath => fs.remove(uploadPath)));
             await fs.remove(tempRoot);
         }
