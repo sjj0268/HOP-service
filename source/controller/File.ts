@@ -15,8 +15,9 @@ import {
     Post,
     Put,
     QueryParam,
+    Req,
     UnprocessableEntityError,
-    UploadedFiles
+    UseBefore
 } from 'routing-controllers';
 import { ResponseSchema } from 'routing-controllers-openapi';
 import { $, fs, os, path } from 'zx';
@@ -24,11 +25,17 @@ import { $, fs, os, path } from 'zx';
 import { dataSource, OAuthCredential, resolveOAuthPlatformByHost, SignedLink, User } from '../model';
 import { AWS_S3_BUCKET, AWS_S3_PUBLIC_HOST, s3Client } from '../utility';
 
-const GIT_UPLOAD_TIMEOUT = 5 * 60 * 1000;
 const MAX_ERROR_LINES = 3;
-type UploadedGitFile = Record<'fieldname' | 'originalname' | 'encoding' | 'mimetype', string> &
-    Record<'size', number> &
-    Record<'buffer', Buffer>;
+const uploadMiddleware = multer({
+    storage: multer.diskStorage({
+        destination: os.tmpdir(),
+        filename: (_request, file, callback) =>
+            callback(
+                null,
+                `hop-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+            )
+    })
+});
 
 const hasControlCharacter = (text: string) =>
     [...text].some(character => {
@@ -110,14 +117,16 @@ export class FileController {
     @Put('/Git/:noProtocolURL(.*)')
     @Authorized()
     @HttpCode(201)
+    @UseBefore(uploadMiddleware.any())
     async uploadFilesToGit(
         @CurrentUser() user: User,
         @Param('noProtocolURL') noProtocolURL: string,
         @QueryParam('branch') branch = 'main',
         @QueryParam('folder') folder?: string,
-        @UploadedFiles('files', { options: { storage: multer.memoryStorage() } })
-        files?: UploadedGitFile[]
+        @Req() request?: { files?: Express.Multer.File[] }
     ) {
+        const files = request?.files;
+
         if (!files?.length) throw new BadRequestError('No files uploaded');
 
         let repositoryURL: URL;
@@ -147,24 +156,23 @@ export class FileController {
 
         const targetFolder = folder ? normalizeRelativePath(folder) : undefined;
         const tempRoot = await fs.mkdtemp(path.resolve(os.tmpdir(), 'hop-git-upload-'));
+        const uploadedTempPaths = files.map(({ path }) => path);
 
         try {
             for (const file of files) {
-                const filePath = resolveSafePath(tempRoot, file.originalname);
+                const filePath = resolveSafePath(tempRoot, file.fieldname);
 
                 await fs.mkdirp(path.dirname(filePath));
-                await fs.writeFile(filePath, file.buffer);
+                await fs.move(file.path, filePath, { overwrite: true });
             }
             if (targetFolder)
                 await $({
-                    timeout: GIT_UPLOAD_TIMEOUT,
                     quiet: true
-                })`npx xgit upload ${tempRoot} ${repositoryURL.toString()} ${branch} ${targetFolder}`;
+                })`npx xgit upload ${tempRoot} ${repositoryURL} ${branch} ${targetFolder}`;
             else
                 await $({
-                    timeout: GIT_UPLOAD_TIMEOUT,
                     quiet: true
-                })`npx xgit upload ${tempRoot} ${repositoryURL.toString()} ${branch}`;
+                })`npx xgit upload ${tempRoot} ${repositoryURL} ${branch}`;
         } catch (error) {
             const detail = sanitizeGitError(
                 error instanceof Error
@@ -178,6 +186,7 @@ export class FileController {
 
             throw new InternalServerError(`Git upload failed: ${reason}`);
         } finally {
+            for (const uploadPath of uploadedTempPaths) await fs.remove(uploadPath);
             await fs.remove(tempRoot);
         }
     }

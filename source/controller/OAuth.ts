@@ -31,10 +31,13 @@ export class OauthController {
     private async syncProfile(
         email: string,
         platform: OAuthPlatform,
-        accessToken: string,
         profile: Partial<Pick<User, 'name' | 'avatar' | 'languages' | 'token'>>
     ) {
-        const { token: username, ...newProfileData } = profile;
+        const { token: accessToken, name: username, ...newProfileData } = profile;
+        if (!accessToken)
+            throw new UnprocessableEntityError(
+                `${platform} user info is missing required field (accessToken)`
+            );
         if (!username)
             throw new UnprocessableEntityError(
                 `${platform} user info is missing required field (username)`
@@ -47,6 +50,7 @@ export class OauthController {
         const oldProfile = { name, avatar, languages: languages?.length ? languages : [] };
         const newProfile = {
             ...newProfileData,
+            name: username,
             languages: newProfileData.languages?.length ? newProfileData.languages : []
         };
 
@@ -77,11 +81,11 @@ export class OauthController {
         });
         const { email, login, avatar_url } = body!;
 
-        return this.syncProfile(email, OAuthPlatform.GitHub, accessToken, {
+        return this.syncProfile(email, OAuthPlatform.GitHub, {
             name: login,
             avatar: avatar_url,
             languages: parseLanguageHeader(acceptLanguage ?? ''),
-            token: login
+            token: accessToken
         });
     }
 
@@ -104,17 +108,17 @@ export class OauthController {
             throw new HttpError(response.status, response.statusText);
         }
 
-        const { username, nickname, email, avatar } = (await response.json()) as CNBUser;
+        const { username, email, avatar } = (await response.json()) as CNBUser;
 
         if (!username || !email)
             throw new UnprocessableEntityError(
                 'CNB user info is missing required fields (username, email)'
             );
-        return this.syncProfile(email, OAuthPlatform.CNB, accessToken, {
-            name: nickname || username,
+        return this.syncProfile(email, OAuthPlatform.CNB, {
+            name: username,
             avatar,
             languages: parseLanguageHeader(acceptLanguage ?? ''),
-            token: username
+            token: accessToken
         });
     }
 }
