@@ -157,7 +157,7 @@ export class FileController {
 
         const targetFolder = folder ? normalizeRelativePath(folder) : undefined;
         const tempRoot = await fs.mkdtemp(path.resolve(os.tmpdir(), 'hop-git-upload-'));
-        const uploadedTempPaths = files.map(({ path }) => path);
+        const pendingUploadedPaths = new Set(files.map(({ path }) => path));
 
         try {
             for (const file of files) {
@@ -165,6 +165,7 @@ export class FileController {
 
                 await fs.mkdirp(path.dirname(filePath));
                 await fs.move(file.path, filePath, { overwrite: true });
+                pendingUploadedPaths.delete(file.path);
             }
             if (targetFolder)
                 await $({
@@ -187,7 +188,7 @@ export class FileController {
 
             throw new InternalServerError(`Git upload failed: ${reason}`);
         } finally {
-            await Promise.all(uploadedTempPaths.map(uploadPath => fs.remove(uploadPath)));
+            await Promise.all([...pendingUploadedPaths].map(uploadPath => fs.remove(uploadPath)));
             await fs.remove(tempRoot);
         }
     }
