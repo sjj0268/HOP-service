@@ -5,6 +5,7 @@ import {
     Authorized,
     BadRequestError,
     Controller,
+    Ctx,
     CurrentUser,
     Delete,
     ForbiddenError,
@@ -15,7 +16,6 @@ import {
     Post,
     Put,
     QueryParam,
-    Req,
     UnprocessableEntityError,
     UseBefore
 } from 'routing-controllers';
@@ -70,12 +70,14 @@ export class FileController {
     @HttpCode(201)
     @UseBefore(uploadMiddleware.any())
     async uploadFilesToGit(
-        @Req() { files }: { files?: Express.Multer.File[] },
+        @Ctx() { req }: { req: { files?: Express.Multer.File[] } },
         @CurrentUser() user: User,
         @Param('noProtocolURL') noProtocolURL: string,
         @QueryParam('branch') branch = 'main',
         @QueryParam('folder') folder?: string
     ) {
+        const { files } = req;
+
         if (!files?.length) throw new BadRequestError('No files uploaded');
 
         let repositoryURL: URL;
