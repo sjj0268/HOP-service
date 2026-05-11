@@ -2,6 +2,7 @@ import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import multer from '@koa/multer';
 import { execFile } from 'child_process';
+import { existsSync } from 'fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, isAbsolute, normalize, resolve, sep } from 'path';
@@ -26,8 +27,10 @@ import { dataSource, OAuthCredential, resolveOAuthPlatformByHost, SignedLink, Us
 import { AWS_S3_BUCKET, AWS_S3_PUBLIC_HOST, s3Client } from '../utility';
 
 const uploadMiddleware = multer({ storage: multer.memoryStorage() });
+const GIT_UPLOAD_TIMEOUT = 5 * 60 * 1000;
+const MAX_ERROR_LINES = 3;
 
-const resolveSafePath = (basePath: string, path: string) => {
+const sanitizePathInput = (path: string) => {
     const normalizedPath = normalize(path).replace(/^[\\/]+/g, '');
 
     if (
@@ -38,6 +41,11 @@ const resolveSafePath = (basePath: string, path: string) => {
     )
         throw new HttpError(422, `Invalid file path: ${path}`);
 
+    return normalizedPath;
+};
+
+const resolveSafePath = (basePath: string, path: string) => {
+    const normalizedPath = sanitizePathInput(path);
     const targetPath = resolve(basePath, normalizedPath);
 
     if (targetPath !== basePath && !targetPath.startsWith(`${basePath}${sep}`))
@@ -46,19 +54,14 @@ const resolveSafePath = (basePath: string, path: string) => {
     return targetPath;
 };
 
-const normalizeRelativePath = (path: string) => {
-    const normalizedPath = normalize(path).replace(/^[\\/]+/g, '');
+const normalizeRelativePath = (path: string) => sanitizePathInput(path);
 
-    if (
-        !normalizedPath ||
-        normalizedPath === '.' ||
-        normalizedPath.startsWith('..') ||
-        isAbsolute(normalizedPath)
-    )
-        throw new HttpError(422, `Invalid path: ${path}`);
-
-    return normalizedPath;
-};
+const sanitizeGitError = (message: string, accessToken: string) =>
+    message
+        .replaceAll(accessToken, '***')
+        .replaceAll(encodeURIComponent(accessToken), '***')
+        .replace(/\/\/[^/@\s]+@/g, '//***@')
+        .trim();
 
 @Controller('/file')
 export class FileController {
@@ -105,7 +108,7 @@ export class FileController {
     ) {
         const files = request?.files;
 
-        if (!files?.length) throw new HttpError(422, 'No file uploaded');
+        if (!files?.length) throw new HttpError(422, 'No files uploaded');
 
         let repositoryURL: URL;
         try {
@@ -142,18 +145,49 @@ export class FileController {
             }
 
             await new Promise<void>((resolveUpload, rejectUpload) => {
-                const command = execFile(
-                    resolve(process.cwd(), 'node_modules/.bin/xgit'),
-                    ['upload', tempRoot, repositoryURL.toString(), branch, targetFolder].filter(
-                        (item): item is string => Boolean(item)
-                    ),
-                    error => (error ? rejectUpload(error) : resolveUpload())
-                );
+                const localCLI = resolve(process.cwd(), 'node_modules/.bin/xgit');
+                const localScript = resolve(process.cwd(), 'node_modules/git-utility/dist/index.js');
+                const uploadArguments = [
+                    'upload',
+                    tempRoot,
+                    repositoryURL.toString(),
+                    branch,
+                    targetFolder
+                ].filter((item): item is string => Boolean(item));
+                let gitUtilityCLI = localCLI;
+                let gitUtilityArguments = uploadArguments;
 
-                command.stdin?.end();
+                if (!existsSync(localCLI)) {
+                    if (existsSync(localScript)) {
+                        gitUtilityCLI = process.execPath;
+                        gitUtilityArguments = [localScript, ...uploadArguments];
+                    } else {
+                        gitUtilityCLI = 'xgit';
+                    }
+                }
+                execFile(
+                    gitUtilityCLI,
+                    gitUtilityArguments,
+                    { timeout: GIT_UPLOAD_TIMEOUT },
+                    (error, stdout, stderr) => {
+                        if (!error) return resolveUpload();
+
+                        rejectUpload(
+                            new Error(`${error.message}\n${stderr || stdout || ''}`.trim())
+                        );
+                    }
+                );
             });
-        } catch {
-            throw new HttpError(500, 'Git upload failed');
+        } catch (error) {
+            const detail = sanitizeGitError(
+                error instanceof Error ? error.message : String(error),
+                credential.accessToken
+            );
+            const reason = detail.split('\n').slice(0, MAX_ERROR_LINES).join(' | ');
+
+            console.error('Git upload failed:', detail);
+
+            throw new HttpError(500, `Git upload failed: ${reason}`);
         } finally {
             await rm(tempRoot, { recursive: true, force: true });
         }
