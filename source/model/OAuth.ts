@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsEnum, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsEnum, IsString, ValidateNested } from 'class-validator';
 import { Column, Entity, ManyToOne } from 'typeorm';
 
 import { Base } from './Base';
@@ -38,9 +38,8 @@ export class OAuthCredential extends Base {
     accessToken: string;
 
     @IsString()
-    @IsOptional()
-    @Column({ nullable: true })
-    username?: string;
+    @Column()
+    username: string;
 
     @Type(() => User)
     @ValidateNested()

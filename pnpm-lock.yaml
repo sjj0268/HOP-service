@@ -119,6 +119,9 @@ importers:
       web-utility:
         specifier: ^4.6.6
         version: 4.6.6(typescript@5.9.3)
+      zx:
+        specifier: 8.8.5
+        version: 8.8.5
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
