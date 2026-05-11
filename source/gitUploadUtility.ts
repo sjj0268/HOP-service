@@ -46,5 +46,6 @@ export const sanitizeGitError = (message: string, accessToken: string) =>
     message
         .replaceAll(accessToken, '***')
         .replaceAll(encodeURIComponent(accessToken), '***')
+        .replaceAll(encodeURIComponent(encodeURIComponent(accessToken)), '***')
         .replace(/\/\/[^/@\s]+@/g, '//***@')
         .trim();

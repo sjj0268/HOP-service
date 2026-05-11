@@ -106,7 +106,7 @@ export class FileController {
         const targetFolder = folder ? normalizeRelativePath(folder) : undefined;
         const tempRoot = await fs.mkdtemp(path.resolve(os.tmpdir(), 'hop-git-upload-'));
         const pendingUploadedPaths = new Set(files.map(({ path }) => path));
-        const originalVerbose = $.verbose;
+        const originalVerbose = Boolean($.verbose);
 
         try {
             $.verbose = true;
