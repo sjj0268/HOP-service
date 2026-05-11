@@ -1,6 +1,7 @@
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import multer from '@koa/multer';
+import { randomUUID } from 'crypto';
 import {
     Authorized,
     BadRequestError,
@@ -29,10 +30,10 @@ const MAX_ERROR_LINES = 3;
 const uploadMiddleware = multer({
     storage: multer.diskStorage({
         destination: os.tmpdir(),
-        filename: (_request, file, callback) =>
+        filename: (_request, _file, callback) =>
             callback(
                 null,
-                `hop-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+                `hop-upload-${Date.now()}-${randomUUID()}`
             )
     })
 });
@@ -186,7 +187,7 @@ export class FileController {
 
             throw new InternalServerError(`Git upload failed: ${reason}`);
         } finally {
-            for (const uploadPath of uploadedTempPaths) await fs.remove(uploadPath);
+            await Promise.all(uploadedTempPaths.map(uploadPath => fs.remove(uploadPath)));
             await fs.remove(tempRoot);
         }
     }
