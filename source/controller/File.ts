@@ -1,7 +1,6 @@
 import { DeleteObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import multer from '@koa/multer';
-import { randomUUID } from 'crypto';
 import {
     Authorized,
     BadRequestError,
@@ -23,65 +22,17 @@ import {
 import { ResponseSchema } from 'routing-controllers-openapi';
 import { $, fs, os, path } from 'zx';
 
+import {
+    MAX_ERROR_LINES,
+    normalizeRelativePath,
+    resolveSafePath,
+    sanitizeGitError
+} from '../gitUploadUtility';
 import { dataSource, OAuthCredential, resolveOAuthPlatformByHost, SignedLink, User } from '../model';
 import { AWS_S3_BUCKET, AWS_S3_PUBLIC_HOST, s3Client } from '../utility';
 
-const MAX_ERROR_LINES = 3;
-const uploadMiddleware = multer({
-    storage: multer.diskStorage({
-        destination: os.tmpdir(),
-        filename: (_request, _file, callback) =>
-            callback(
-                null,
-                `hop-upload-${Date.now()}-${randomUUID()}`
-            )
-    })
-});
-
-const hasControlCharacter = (text: string) =>
-    [...text].some(character => {
-        const code = character.charCodeAt(0);
-
-        return code < 32 || code === 127;
-    });
-const MAX_UPLOAD_FILE_PATH_LENGTH = 512;
-
-const sanitizePathInput = (inputPath: string) => {
-    if (inputPath.length > MAX_UPLOAD_FILE_PATH_LENGTH)
-        throw new UnprocessableEntityError(`Invalid file path: ${inputPath}`);
-
-    const normalizedPath = path.normalize(inputPath).replace(/^[\\/]+/g, '');
-
-    if (
-        !normalizedPath ||
-        normalizedPath === '.' ||
-        normalizedPath.startsWith('..') ||
-        hasControlCharacter(normalizedPath) ||
-        path.isAbsolute(normalizedPath)
-    )
-        throw new UnprocessableEntityError(`Invalid file path: ${inputPath}`);
-
-    return normalizedPath;
-};
-
-const resolveSafePath = (basePath: string, inputPath: string) => {
-    const normalizedPath = sanitizePathInput(inputPath);
-    const targetPath = path.resolve(basePath, normalizedPath);
-
-    if (targetPath !== basePath && !targetPath.startsWith(`${basePath}${path.sep}`))
-        throw new UnprocessableEntityError(`Invalid file path: ${inputPath}`);
-
-    return targetPath;
-};
-
-const normalizeRelativePath = (path: string) => sanitizePathInput(path);
-
-const sanitizeGitError = (message: string, accessToken: string) =>
-    message
-        .replaceAll(accessToken, '***')
-        .replaceAll(encodeURIComponent(accessToken), '***')
-        .replace(/\/\/[^/@\s]+@/g, '//***@')
-        .trim();
+const uploadMiddleware = multer({ dest: os.tmpdir() });
+$.verbose = true;
 
 @Controller('/file')
 export class FileController {
@@ -120,14 +71,12 @@ export class FileController {
     @HttpCode(201)
     @UseBefore(uploadMiddleware.any())
     async uploadFilesToGit(
+        @Req() { files }: { files: Express.Multer.File[] },
         @CurrentUser() user: User,
         @Param('noProtocolURL') noProtocolURL: string,
         @QueryParam('branch') branch = 'main',
-        @QueryParam('folder') folder?: string,
-        @Req() request?: { files?: Express.Multer.File[] }
+        @QueryParam('folder') folder?: string
     ) {
-        const files = request?.files;
-
         if (!files?.length) throw new BadRequestError('No files uploaded');
 
         let repositoryURL: URL;
@@ -168,13 +117,9 @@ export class FileController {
                 pendingUploadedPaths.delete(file.path);
             }
             if (targetFolder)
-                await $({
-                    quiet: true
-                })`npx xgit upload ${tempRoot} ${repositoryURL} ${branch} ${targetFolder}`;
+                await $`npx xgit upload ${tempRoot} ${repositoryURL} ${branch} ${targetFolder}`;
             else
-                await $({
-                    quiet: true
-                })`npx xgit upload ${tempRoot} ${repositoryURL} ${branch}`;
+                await $`npx xgit upload ${tempRoot} ${repositoryURL} ${branch}`;
         } catch (error) {
             const detail = sanitizeGitError(
                 error instanceof Error
